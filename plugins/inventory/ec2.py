@@ -269,11 +269,23 @@ class Ec2Inventory(object):
             'group_by_rds_engine',
             'group_by_rds_parameter_group',
         ]
+
         for option in group_by_options:
             if config.has_option('ec2', option):
                 setattr(self, option, config.getboolean('ec2', option))
             else:
                 setattr(self, option, True)
+
+        group_by_custom = [
+            'group_by_comma_split_tag_values'
+        ]
+
+        for option in group_by_custom:
+          # Let's set the tags that we want to expose as high level groupings
+          if config.has_option('ec2', option):
+              setattr(self, option, config.get('ec2', option))
+          else:
+              setattr(self, option, False)
 
         # Do we need to just include hosts that match a pattern?
         try:
@@ -367,7 +379,7 @@ class Ec2Inventory(object):
             if e.error_code == 'AuthFailure':
                 error = self.get_auth_error_message()
             else:
-                backend = 'Eucalyptus' if self.eucalyptus else 'AWS' 
+                backend = 'Eucalyptus' if self.eucalyptus else 'AWS'
                 error = "Error connecting to %s backend.\n%s" % (backend, e.message)
             self.fail_with_error(error)
 
@@ -383,7 +395,7 @@ class Ec2Inventory(object):
                     self.add_rds_instance(instance, region)
         except boto.exception.BotoServerError, e:
             error = e.reason
-            
+
             if e.error_code == 'AuthFailure':
                 error = self.get_auth_error_message()
             if not e.reason == "Forbidden":
@@ -406,7 +418,7 @@ class Ec2Inventory(object):
             errors.append(" - No Boto config found at any expected location '%s'" % ', '.join(boto_paths))
 
         return '\n'.join(errors)
-        
+
     def fail_with_error(self, err_msg):
         '''log an error to std err for ansible-playbook to consume and exit'''
         sys.stderr.write(err_msg)
@@ -510,7 +522,7 @@ class Ec2Inventory(object):
                     if self.nested_groups:
                         self.push_group(self.inventory, 'security_groups', key)
             except AttributeError:
-                self.fail_with_error('\n'.join(['Package boto seems a bit older.', 
+                self.fail_with_error('\n'.join(['Package boto seems a bit older.',
                                             'Please upgrade boto >= 2.3.0.']))
 
         # Inventory: Group by tag keys
@@ -521,6 +533,32 @@ class Ec2Inventory(object):
                 if self.nested_groups:
                     self.push_group(self.inventory, 'tags', self.to_safe("tag_" + k))
                     self.push_group(self.inventory, self.to_safe("tag_" + k), key)
+
+        # Inventory: Group by custom tag keys, comma separated.
+        # This can be used to make host groups from Tag metadata
+        # group_by_comma_split_tag_values: list of tags (comma separated) tag_key1,tag_key2,tag_key3
+        # Example:
+        # AWS Instance 1 => Tags => [ { 'Key': 'debops-roles', 'Value': 'debops_nginx,debops_php5,debops_gitusers' } ]
+        # group_by_comma_split_tag_values: debops-roles
+        # This would expand as follows
+        # {
+        #   ...
+        #   "debops_nginx": [
+        #     "Instance 1"
+        #   ],
+        #   "debops_gitusers": [
+        #     "Instance 1"
+        #   ],
+        #   "debops_php5": [
+        #     "Instance 1"
+        #   ],
+        #   ...
+        # }
+        if self.group_by_comma_split_tag_values:
+            for k, v in instance.tags.iteritems():
+                if k in self.group_by_comma_split_tag_values:
+                    for group in v.split(','):
+                        self.push(self.inventory, group, dest)
 
         # Inventory: Group by Route53 domain names if enabled
         if self.route53_enabled and self.group_by_route53_names:
@@ -604,7 +642,7 @@ class Ec2Inventory(object):
                         self.push_group(self.inventory, 'security_groups', key)
 
             except AttributeError:
-                self.fail_with_error('\n'.join(['Package boto seems a bit older.', 
+                self.fail_with_error('\n'.join(['Package boto seems a bit older.',
                                             'Please upgrade boto >= 2.3.0.']))
 
 
